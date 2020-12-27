@@ -14,7 +14,7 @@ int key = 202;
 bool found = false; 
 int current_thread = 0; 
 
-void* ThreadSearch() 
+void* ThreadSearch(void *) 
 { 
 	int num = current_thread++; 
 
@@ -29,17 +29,17 @@ void* ThreadSearch()
 
 int main() 
 { 
-	pthread_t thread[THREAD_MAX]; 
+	thread t[THREAD_MAX]; 
 
 	for (int i = 0; i < THREAD_MAX; i++) 
 	{ 
-		pthread_create(&thread[i], NULL, ThreadSearch, (void*)NULL); 
+		t[i] = std::thread(ThreadSearch); 
 	} 
 
 	
     for (int i = 0; i < THREAD_MAX; i++) 
     { 
-        pthread_join(thread[i], NULL); 
+        t[i].join(); 
     } 
   
 	if (found) 
