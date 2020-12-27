@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/in.h>
 #include <errno.h>
 #include <string.h>
 #include <arpa/inet.h>
@@ -10,134 +11,156 @@
 #include <signal.h>
 #include <mutex>
 #define MAX_LEN 200
-#define MAX_CLIENTS 8
 #define NUM_COLORS 6
-#define FAILURE -1
 #define PORT 8888
+#define FAILURE -1
+
 using namespace std;
 
-string def_col = "\033[0m";
-string colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m","\033[36m"};
+bool exit_flag = false;
+thread t_send, t_recv;
+int client_socket_fd;
+string def_col="\033[0m";
+string colors[]={"\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m", "\033[36m"};
 
-struct terminal 
-{
-	int id;
-	string name;
-	int socket;
-	thread _thread;
-};
-
-vector<terminal> clients;
-mutex cout_mtx, clients_mtx;
-int seed = 0;
-
-// Utility Funcions
+void catch_ctrl_c (int signal);
 string color (int code);
-void set_name (int id, char name[]);
-void shared_print (string str, bool endLine);
-int broadcast_message (string message, int sender_id);
-int broadcast_message (int num, int sender_id);
-void end_connection (int id);
-void handle_client (int client_socket, int id);
+void eraseText (int cnt);
+void send_message (int client_socket_fd);
+void recv_message (int client_socket_fd);
 
-int main () 
+int main() 
 {
-	// Create a socket
-	int server_socket_fd;
-	server_socket_fd = socket(AF_NET, SOCK_STREAM, 0);	
-	
-	// check for exception
-	if (server_socket_fd == FAILURE) 
+	client_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (client_socket_fd == FAILURE) 
 	{
-		perror ("Socket: ");
-		exit (-1);
-	}
-	
-	// Intialize the environment for socket
-	struct sockadd_in server;
-	server.sin_family = AFNET;
-	server.sin_port = htons(PORT);	
-	server.sin_addr.s_addr = INADDR_ANY;
-	bzer(&server.sin_zero, 0);
-	
-	// bind the socket to the address and port number
-	int bind_status = bind (server_socket_fd, (struct sockaddr*)&server, sizeof(struct sockaddr_in));
-	 
-	// check for exception
-	if (bind_status == 	FAILURE) 
-	{
-		perror ("Bind Error: ");
-		exit (-1);
-	}
-	
-	// waiting for the client to approach & make a connection
-	int listen_status = listen (server_socket_fd, MAX_CLIENTS);
-	
-	// check for exception
-	if (listen_status == FAILURE) 
-	{
-		perror ("Listen Error: ");
-		exit (-1);
+		perror("Socket: ");
+		exit(-1);
 	}
 	
 	struct sockaddr_in client;
-	unsigned int len = sizeof(sockadd_in);
+	client.sin_family = AF_INET;
+	client.sin_port = htons(PORT); // Port no. of server
+	client.sin_addr.s_addr = INADDR_ANY;
+	bzero(&client.sin_zero,0);
+
+	int connect_status = connect(client_socket_fd, (struct sockaddr *)&client, 
+									sizeof(struct sockaddr_in));
+	
+	if (connect_status == FAILURE) 
+	{
+		perror("Connect: ");
+		exit(-1);
+	}
+
+	signal (SIGINT, catch_ctrl_c);
+	char name[MAX_LEN];
+	cout << "Enter Your Name: ";
+	cin.getline(name, MAX_LEN);
+	
+	send (client_socket_fd, name, sizeof(name), 0);
 	
 	cout << colors[NUM_COLORS - 1] << "\n\t  ====== Welcome to the chat-room ======   " << endl << def_col;
 	
-	while (1) 
-	{
-		int client_socket_fd = accept (server_socket_fd, (struct sockaddr*)&client, &len);
-		if (client_socket_fd == FAILURE) 
-		{
-			perror ("Accept Error");
-			exit (-1);
-		}
+	thread t1 (send_message, client_socket_fd);
+	thread t2 (recv_message, client_socket_fd);
 	
-		++seed;
-		thread _thread (handle_client, client_socket, seed);
-		lock_guard<mutex> guard (clients_mtx);
-		clients.push_back ({seed, string("Anonymous"), client_socket(move(_thread))});
+	t_send = move(t1);
+	t_recv = move(t2);
+	
+	if (t_send.joinable()) 
+	{
+		t_send.join();
 	}
 	
-	for (int i = 0; i < (int)clients.size(); i++) 
+	if (t_recv.joinable()) 
 	{
-		if (clients[i]._thread.joinable()) 
-		{
-			clients[i]._thread.join();
-		}
+		t_recv.join();
 	}
-	
-	close (server_soket_fd);
 	
 	return 0;
 }
 
-string color (int code) 
+// Handler for "Ctrl + C"
+void catch_ctrl_c (int signal) 
 {
-	return colors[code % NUM_COLORS];
+	char str[MAX_LEN] = "#exit";
+	send (client_socket_fd, str, sizeof(str), 0);
+	exit_flag = true;
+	t_send.detach();
+	t_recv.detach();
+	close(client_socket_fd);
+	exit(signal);
 }
 
-// Set the name of client
-void set_name (int id, char name[]) 
+string color(int code)
 {
-	for (int i = 0; i < (int)clients.size(); ++i) 
+	return colors[code%NUM_COLORS];
+}
+
+// Erase text from terminal
+void eraseText(int cnt)
+{
+	char back_space = 8;
+	for (int i = 0; i < cnt; i++)
 	{
-		if (clients[i].id == id) 
-		{
-			clients[i].name = string(name);
-			break;
-		}
+		cout << back_space;
 	}	
 }
 
-// For synchronisation of cout statements
-void shared_print (string str, bool endLine=true)
-{	
-	lock_guard<mutex> guard (cout_mtx);
-	cout << str;
-	if (endLine) {
-		cout << endl;
-	}
+// Send message to everyone
+void send_message (int client_socket_fd)
+{
+	while (1)
+	{
+		cout << colors[1] << "You : " << def_col;
+		char str[MAX_LEN];
+		cin.getline(str, MAX_LEN);
+		
+		send (client_socket_fd, str, sizeof(str), 0);
+		if (strcmp(str, "#exit") == 0)
+		{
+			exit_flag = true;
+			t_recv.detach();	
+			close (client_socket_fd);
+			return;
+		}	
+	}		
 }
 
+// Receive message
+void recv_message (int client_socket_fd)
+{
+	while (1)
+	{
+		if (exit_flag)
+		{
+			return;
+		}
+		
+		char name[MAX_LEN], str[MAX_LEN];
+		int color_code;
+		
+		int bytes_received = recv(client_socket_fd, name, sizeof(name), 0);
+		if(bytes_received <= 0)
+		{
+			continue;
+		}
+		
+		recv (client_socket_fd, &color_code, sizeof(color_code), 0);
+		recv (client_socket_fd, str, sizeof(str), 0);
+		eraseText (6);
+		
+		if (strcmp(name, "#NULL") != 0) 
+		{
+			cout << color(color_code) << name << " : " << def_col << str << endl;
+		}
+		else
+		{
+			cout << color(color_code) << str << endl;
+		}
+		
+		cout << colors[1] << "You : " << def_col;
+		fflush(stdout);
+	}	
+}

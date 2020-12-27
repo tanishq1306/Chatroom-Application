@@ -35,16 +35,15 @@ int uid = 0;
 string color (int code);
 void set_name (int id, char name[]);
 void shared_print (string str, bool endLine);
-int broadcast_message (string message, int sender_id);
-int broadcast_message (int num, int sender_id);
+void broadcast_message (string message, int sender_id);
+void broadcast_message (int num, int sender_id);
 void end_connection (int id);
 void handle_client (int client_socket, int id);
 
 int main () 
 {
 	// Create a socket
-	int server_socket_fd;
-	server_socket_fd = socket(AF_NET, SOCK_STREAM, 0);	
+	int server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);	
 	
 	// check for exception
 	if (server_socket_fd == FAILURE) 
@@ -54,11 +53,11 @@ int main ()
 	}
 	
 	// Intialize the environment for socket
-	struct sockadd_in server;
-	server.sin_family = AFNET;
+	struct sockaddr_in server;
+	server.sin_family = AF_INET;
 	server.sin_port = htons(PORT);	
 	server.sin_addr.s_addr = INADDR_ANY;
-	bzer(&server.sin_zero, 0);
+	bzero (&server.sin_zero, 0);
 	
 	// bind the socket to the address and port number
 	int bind_status = bind (server_socket_fd, (struct sockaddr*)&server, sizeof(struct sockaddr_in));
@@ -81,7 +80,7 @@ int main ()
 	}
 	
 	struct sockaddr_in client;
-	unsigned int len = sizeof(sockadd_in);
+	unsigned int len = sizeof(sockaddr_in);
 	
 	cout << colors[NUM_COLORS - 1] << "\n\t  ====== Welcome to the chat-room ======   " << endl << def_col;
 	
@@ -95,9 +94,9 @@ int main ()
 		}
 	
 		++uid;
-		thread _thread (handle_client, client_socket, uid);
-		lock_guard<mutex> guard (clients_mtx);
-		clients.push_back ({uid, string("Anonymous"), client_socket(move(_thread))});
+		thread t (handle_client, client_socket_fd, uid);
+		lock_guard <mutex> guard (clients_mtx);
+		clients.push_back ({uid, string("Anonymous"), client_socket_fd, (move(t))});
 	}
 	
 	for (int i = 0; i < (int)clients.size(); i++) 
@@ -108,14 +107,14 @@ int main ()
 		}
 	}
 	
-	close (server_soket_fd);
+	close (server_socket_fd);
 	
 	return 0;
 }
 
 string color (int code) 
 {
-	return colors[code % NUM_COLORS];
+	return (string)colors[code % NUM_COLORS];
 }
 
 // Set the name of client
@@ -132,9 +131,9 @@ void set_name (int id, char name[])
 }
 
 // For synchronisation of cout statements
-void shared_print (string str, bool endLine=true)
+void shared_print (string str, bool endLine = true)
 {	
-	lock_guard<mutex> guard (cout_mtx);
+	lock_guard <mutex> guard (cout_mtx);
 	cout << str;
 	if (endLine) {
 		cout << endl;
@@ -142,7 +141,7 @@ void shared_print (string str, bool endLine=true)
 }
 
 // Broadcast message to all clients except the sender
-int broadcast_message (string message, int sender_id)
+void broadcast_message (string message, int sender_id)
 {
 	char temp[MAX_LEN];
 	strcpy(temp, message.c_str());
@@ -157,7 +156,7 @@ int broadcast_message (string message, int sender_id)
 }
 
 // Broadcast a number to all clients except the sender
-int broadcast_message (int num, int sender_id)
+void broadcast_message (int num, int sender_id)
 {
 	for (int i = 0; i < (int)clients.size(); ++i)
 	{
@@ -174,7 +173,7 @@ void end_connection (int id)
 	{
 		if (clients[i].id == id)	
 		{
-			lock_guard<mutex> guard (clients_mtx);
+			lock_guard <mutex> guard (clients_mtx);
 			clients[i]._thread.detach();
 			clients.erase (clients.begin() + i);
 			close (clients[i].socket);
@@ -200,8 +199,10 @@ void handle_client (int client_socket, int id)
 	while(1)
 	{
 		int bytes_received = recv (client_socket, str, sizeof(str), 0);
-		if (bytes_received <= 0)
+		if (bytes_received <= 0) {
 			return;
+		}
+		
 		if (strcmp (str, "#exit") == 0)
 		{
 			// Display leaving message
